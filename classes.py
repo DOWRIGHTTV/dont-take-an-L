@@ -9,6 +9,8 @@ from random import randint
 from enum import Enum
 from collections import namedtuple
 
+DEBUG = False
+
 
 __all__ = (
     'Space', 'Rocket', 'COORDS', 'DEBRIS', 'DIR'
@@ -47,16 +49,21 @@ class Space:
         self._render_lock  = render_lock
         self._control_lock = control_lock
 
-        self._right_bound = 0
-
         self.max_width  = 160
         self.min_height = 1
-        self.max_height = 35
+        self.max_height = 25
+
+        self._right_bound = int(self.max_width)
 
         self.dimensions = (self.max_width, self.max_height)
 
         self.debris_count = 19
         self.debris_locations = {}
+
+        self._pad_debug = 0
+
+        # NOTE: should be offsetting for a debri or if shield present
+        self.max_width -= 3
 
         self._debris_condition = tuple([self.max_width/i for i in range(1,9)])
 
@@ -72,11 +79,13 @@ class Space:
 
             with self._control_lock:
                 for y_coord in range(self.max_height, -1, -1):
-                    self._y_coord, self._right_bound, self._line = y_coord, 0, []
+                    self._y_coord, self._right_bound, self._line = y_coord, int(self.max_width), []
                     if player.coordinates.y == y_coord:
                         self._line.append(str(self._player))
 
                         self._right_bound = player.coordinates.x
+
+                        self._pad_debug = self.max_width - self._right_bound
 
                     self._handle_debris()
                     self._draw_line()
@@ -114,14 +123,19 @@ class Space:
                 self.debris_locations.pop(y_coord)
 
     def _handle_debris(self):
+        # shield = True
         # checking for presence of debris, then making adjustments based on player position
         debris = self.debris_locations.get(self._y_coord, None)
         if debris is not None and debris.coords[0] < self.max_width:
             if (self._line): # player is sharing a line with a debris
                 debris_dif = debris.coords[0] - self._player.coordinates.x
+                # if not self._player.is_shielded:
+                #     shield = False
                 if (debris_dif in range(-4, 1)): # player hit debris :(
                     if debris.type in ['s', 'S']:
                         self._player.add_shield(debris)
+                        # if (not shield):
+                        #     self._right_bound += 6 # coloring code adjustment.
                     else:
                         self._player.damage(debris.damage)
                     # removing debris from space
@@ -130,9 +144,16 @@ class Space:
                 # player heading towards debris
                 elif (debris_dif > 0):
                     distance_to_player = debris.coords[0] - self._player.coordinates.x
-                    self._line.append(f"{' '*distance_to_player}{debris.type}")
 
                     self._right_bound = debris.coords[0]
+                    if (self._player.has_moved):
+                        self._right_bound += 1
+                        distance_to_player -= 1
+                    # if (self._player.is_shielded):
+                    #     self._right_bound += 10
+                    #     distance_to_player += 10
+
+                    self._line.append(f"{' '*distance_to_player}{debris.type}")
 
                 # player heading away from debris
                 elif (debris_dif < -4):
@@ -145,9 +166,18 @@ class Space:
 
             else:
                 self._line.append(f"{' '*debris.coords[0]}{debris.type}")
+                if (self._player.has_moved):
+                    self._right_bound -= 2
+
+                self._right_bound = debris.coords[0]
 
     def _draw_line(self):
-        print(''.join(self._line).rjust(self._right_bound, ' '), end='\r')
+        # if DEBUG:
+        #     if self.max_width - self._right_bound > 0:
+        #         self._line.insert(0, f'{self.max_width - self._right_bound}')
+        self._line.append(f' '*((self.max_width) - self._right_bound))
+        line = ''.join(self._line).rjust(self.max_width, ' ')
+        print(line, end='\r')
         # sliding down cursor to new line
         print('')
 
@@ -185,6 +215,8 @@ class Rocket:
         self._x_position = 0 # nose of rocket
         self._y_position = 6 # height of rocket
 
+        self._last_y_pos = int(self._y_position)
+
         self._total_len = 0
 
         self.max_width, self.max_height = space_dimensions
@@ -210,7 +242,7 @@ class Rocket:
             self._total_len = 0
             return ''
 
-        if self._x_position + len(self.texture) <= 8:
+        if self._x_position + len(self.texture) <= 10:
             rocket = self.texture
             rocket = rocket[-self._x_position:]
         else:
@@ -226,9 +258,13 @@ class Rocket:
     def forward(self):
         with self._control_lock:
             self._x_position += 1
+            # updating y pos for movement detection
+            self._last_y_pos = int(self._y_position)
 
     def control(self, d):
         with self._control_lock:
+            # updating last position for movement detection
+            self._last_y_pos = int(self._y_position)
             if (d is DIR.UP and self._y_position < self.max_height):
                 self._y_position += 1
 
@@ -293,6 +329,10 @@ class Rocket:
     #         exhaust = self.exhaust
 
     #     return Cl.RED + exhaust + Cl.ENDC
+
+    @property
+    def has_moved(self):
+        return self._last_y_pos != self._y_position
 
     @property
     def coordinates(self):
